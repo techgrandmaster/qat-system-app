@@ -1,0 +1,2 @@
+[console_scripts]
+qat-system-app = qat_system_app.main:main

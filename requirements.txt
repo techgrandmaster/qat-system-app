@@ -1,0 +1,8 @@
+PyPDF2~=3.0.1
+nltk~=3.9.1
+Flask~=3.0.3
+setuptools~=75.1.0
+
+textblob~=0.18.0.post0
+transformers~=4.45.2
+docx~=0.2.4

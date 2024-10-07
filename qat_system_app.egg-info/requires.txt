@@ -1,0 +1,10 @@
+Flask
+Jinja2
+PyYAML
+Werkzeug
+click
+lxml
+nltk
+numpy
+pillow
+requests
