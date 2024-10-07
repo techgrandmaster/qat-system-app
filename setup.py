@@ -11,7 +11,7 @@ setup(
     description="A Flask app for QAT system",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/technophiia/qat-system-app",
+    url="https://github.com/techgrandmaster/qat-system-app",
     packages=find_packages(),
     classifiers=[
         "Programming Language :: Python :: 3",
