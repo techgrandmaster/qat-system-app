@@ -30,7 +30,7 @@ qat-system-app
 ### Setting Up the Development Environment
 1. Clone the repository:
     ```bash
-    git clone https://github.com/technophilia/qat-system-app.git
+    git clone https://github.com/techgrandmaster/qat-system-app.git
     ```
 2. Navigate to the project directory:
     ```bash
