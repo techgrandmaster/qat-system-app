@@ -2,9 +2,16 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>QAT System</title>
+    <title>FlaskApp</title>
 </head>
 <body>
+    <h1>Hey Buddy!</h1>
+    <h2>Welcome to the QAT system!</h2>
 
+    <form method="POST" enctype="multipart/form-data">
+        {{form.hidden_tag()}}
+        {{form.file()}}
+        {{form.submit()}}
+    </form>
 </body>
 </html>

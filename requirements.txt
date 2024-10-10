@@ -6,3 +6,5 @@ Flask~=3.0.3
 textblob~=0.18.0.post0
 transformers~=4.45.2
 setuptools~=75.1.0
+Werkzeug~=3.0.4
+WTForms~=3.1.2

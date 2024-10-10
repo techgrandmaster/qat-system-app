@@ -1,3 +1,4 @@
+import os
 import random
 import sqlite3
 import uuid
@@ -6,12 +7,21 @@ from difflib import SequenceMatcher
 import PyPDF2
 import docx
 import nltk
-from flask import Flask, request, jsonify
-from flask_uploads import UploadSet, configure_uploads, DOCUMENTS
+from flask import Flask, request, jsonify, render_template
+from flask_wtf import FlaskForm
 from textblob import TextBlob
 from transformers import pipeline
+from werkzeug.utils import secure_filename
+from wtforms import FileField, SubmitField
+from wtforms.validators import InputRequired
 
 app = Flask(__name__)
+app.config['SECRET_KEY'] = 'superstructure'
+app.config['UPLOAD_FOLDER'] = 'static/files'
+
+class UploadFileForm(FlaskForm):
+    file = FileField('File', validators=[InputRequired()])
+    submit = SubmitField('Upload file')
 
 nltk.download('punkt')  # Download the Punkt sentence tokenizer
 nltk.download('averaged_perceptron_tagger')  # Download the part-of-speech tagger
@@ -19,11 +29,6 @@ nltk.download('averaged_perceptron_tagger')  # Download the part-of-speech tagge
 # Initialize the question answering and summarization pipelines with specified model
 question_answering_pipeline = pipeline("question-answering", model="distilbert-base-cased-distilled-squad")
 summarization_pipeline = pipeline("summarization", model="facebook/bart-large-cnn")
-
-# Configure file uploads
-documents = UploadSet('documents', DOCUMENTS)
-app.config['UPLOADED_DOCUMENTS_DEST'] = 'uploads'
-configure_uploads(app, documents)
 
 # Database setup
 conn = sqlite3.connect('qat_database.db')
@@ -39,33 +44,24 @@ cursor.execute('''
 conn.commit()
 
 
-@app.route('/')
-def index():
-    return "Welcome to the QAT system!"
-
-
-@app.route('/upload/', methods=['POST'])
+@app.route('/upload/', methods=['GET', 'POST'])
 def upload_document():
-    if 'document' not in request.files:
-        return jsonify({'error': 'No document part'}), 400
+    form = UploadFileForm()
+    if form.validate_on_submit():
+        file = form.file.data  # Grab the file
+        file.save(os.path.join(os.path.abspath(os.path.dirname(__file__)), app.config['UPLOAD_FOLDER'], secure_filename(file.filename)))  # Save the file
 
-    file = request.files['document']
-    if file.filename == '':
-        return jsonify({'error': 'No selected file'}), 400
-
-    if file:
-        filename = documents.save(file)
         # Further processing of the uploaded document
         try:
-            if filename.endswith('.pdf'):
-                process_pdf(filename)
-            elif filename.endswith('.docx'):
-                process_docx(filename)
+            if secure_filename(file.filename).endswith('.pdf'):
+                process_pdf(file)
+            elif secure_filename(file.filename).endswith('.docx'):
+                process_docx(file)
             # Add more file types as needed
         except Exception as e:
             return jsonify({'error': f'Error processing document: {str(e)}'}), 500
-
-        return jsonify({'message': f'Document uploaded as {filename}'}), 200
+        return jsonify({'message': f'Document uploaded as {file}'}), 200
+    return render_template('index.html', form=form)
 
 
 @app.route('/query/', methods=['POST'])
@@ -158,6 +154,10 @@ def delete_test_question(test_question_id):
         return jsonify({'message': 'Test question deleted successfully'}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+# def allowed_file(filename):
+#     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
 def process_pdf(filename):
