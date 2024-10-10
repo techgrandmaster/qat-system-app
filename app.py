@@ -16,16 +16,14 @@ app = Flask(__name__)
 nltk.download('punkt')  # Download the Punkt sentence tokenizer
 nltk.download('averaged_perceptron_tagger')  # Download the part-of-speech tagger
 
-question_answering_pipeline = pipeline("question-answering")
-summarization_pipeline = pipeline("summarization") # Use a summarization model
+# Initialize the question answering and summarization pipelines with specified model
+question_answering_pipeline = pipeline("question-answering", model="distilbert-base-cased-distilled-squad")
+summarization_pipeline = pipeline("summarization", model="facebook/bart-large-cnn")
 
 # Configure file uploads
 documents = UploadSet('documents', DOCUMENTS)
 app.config['UPLOADED_DOCUMENTS_DEST'] = 'uploads'
 configure_uploads(app, documents)
-
-# Initialize the question answering pipeline
-qat_pipeline = pipeline("question-answering")
 
 # Database setup
 conn = sqlite3.connect('qat_database.db')
@@ -82,7 +80,7 @@ def query():
     # Answer the question
     with open(document_path, 'r') as file:
         context = file.read()
-    result = qat_pipeline({'question': question, 'context': context})
+    result = question_answering_pipeline({'question': question, 'context': context})
     answer = result['answer']
 
     # Generate bullet points
@@ -185,6 +183,7 @@ def process_docx(filename):
     print(f"Extracted text from DOCX: {text}")
 
 
+# Generate bullet points from summarized answer
 def generate_bullet_points(answer):
     # Summarize the answer to extract key information
     summary_text = summarization_pipeline(answer, max_length=100, min_length=30, do_sample=False)[0]['summary_text']
@@ -239,8 +238,7 @@ def generate_test_question_and_answer(answer):
 
     # Select a test question randomly
     test_question = random.choice(questions)
-
-    # Generate the test answer (use the original answer or a relevant part)
+    # Generate the test answer
     test_answer = answer
 
     return test_question, test_answer
