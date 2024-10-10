@@ -1,3 +1,4 @@
+MANIFEST.in
 README.md
 setup.py
 qat_system_app/__init__.py

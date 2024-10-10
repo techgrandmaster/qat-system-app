@@ -29,7 +29,8 @@ setup(
         "nltk",
         "numpy",
         "pillow",
-        "requests"
+        "requests",
+
     ],
     entry_points={
         'console_scripts': [

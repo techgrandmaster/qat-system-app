@@ -1,0 +1,3 @@
+   include app/templates/*.html
+   include app/static/*.css
+   include app/static/*.js
