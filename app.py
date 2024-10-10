@@ -156,10 +156,6 @@ def delete_test_question(test_question_id):
         return jsonify({'error': str(e)}), 500
 
 
-# def allowed_file(filename):
-#     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-
-
 def process_pdf(filename):
     with open(f'uploads/{filename}', 'rb') as pdf_file:
         pdf_reader = PyPDF2.PdfReader(pdf_file)
