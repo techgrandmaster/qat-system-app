@@ -1,16 +1,20 @@
 # qat-system-app
 
 ## Overview
-**qat-system-app** is a comprehensive QAT system application designed to streamline and enhance learning experiences. It integrates various libraries and frameworks to provide robust functionalities for text processing, data parsing, web interactions, and more, making it an essential tool for students, researchers and even faculty members.
+**qat-system-app** is a comprehensive QAT system Flask application that provides various features such as text processing, PDF handling, and natural language processing (NLP). The application is designed to streamline and enhance learning experiences. It integrates various libraries and frameworks to provide robust functionalities for text processing, data parsing, web interactions, and more, making it an essential tool for students, researchers and even faculty members.
 
 ## Features
+- **Web Framework**: Build web applications and interfaces using `Flask`.
+- **AI/ML**: Machine Learning capabilities with PyTorch, text generation and language understanding using Hugging Face's `transformers`
+- **NLP**: Natural language processing with NLTK and TextBlob
 - **Text Processing**: Utilize `nltk` for advanced natural language processing.
 - **Data Parsing and Manipulation**: Leverage `lxml` for XML and HTML parsing.
-- **Web Framework**: Build web applications and interfaces using `Flask`.
 - **Image Processing**: Handle image files with `Pillow`.
 - **HTTP Requests**: Simplify HTTP interactions with `requests`.
 - **Template Rendering**: Use `Jinja2` for versatile template rendering.
-- **And more...
+- DOCX file manipulation with `docx` and `python-docx`
+- PDF manipulation using PyPDF2
+
 
 ## Installation
 To install `qat-system-app`, use pip:
