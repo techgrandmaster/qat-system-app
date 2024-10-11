@@ -19,9 +19,11 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'superstructure'
 app.config['UPLOAD_FOLDER'] = 'static/files'
 
+
 class UploadFileForm(FlaskForm):
     file = FileField('File', validators=[InputRequired()])
     submit = SubmitField('Upload file')
+
 
 nltk.download('punkt')  # Download the Punkt sentence tokenizer
 nltk.download('averaged_perceptron_tagger')  # Download the part-of-speech tagger
@@ -42,6 +44,7 @@ cursor.execute('''
     )
 ''')
 conn.commit()
+conn.close()
 
 
 @app.route('/upload/', methods=['GET', 'POST'])
@@ -49,18 +52,23 @@ def upload_document():
     form = UploadFileForm()
     if form.validate_on_submit():
         file = form.file.data  # Grab the file
-        file.save(os.path.join(os.path.abspath(os.path.dirname(__file__)), app.config['UPLOAD_FOLDER'], secure_filename(file.filename)))  # Save the file
+        # Save the file in the UPLOAD_FOLDER
+        filename = secure_filename(file.filename)
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(file_path)  # Save the file to disk
 
-        # Further processing of the uploaded document
+        # Process the file according to its type (PDF or DOCX)
         try:
-            if secure_filename(file.filename).endswith('.pdf'):
-                process_pdf(file)
-            elif secure_filename(file.filename).endswith('.docx'):
-                process_docx(file)
-            # Add more file types as needed
+            if filename.endswith('.pdf'):
+                extracted_text_file = process_pdf(file)
+            elif filename.endswith('.docx'):
+                extracted_text_file = process_docx(file)
+            else:
+                return jsonify({'error': 'Unsupported file type'}), 400
+
+            return jsonify({'message': f'Document processed and saved as {extracted_text_file}'}), 200
         except Exception as e:
             return jsonify({'error': f'Error processing document: {str(e)}'}), 500
-        return jsonify({'message': f'Document uploaded as {file}'}), 200
     return render_template('index.html', form=form)
 
 
@@ -87,11 +95,14 @@ def query():
 
     # Save test question and answer
     test_question_id = str(uuid.uuid4())
-    cursor.execute('''
+    query_conn = sqlite3.connect('qat_database.db')
+    query_cursor = query_conn.cursor()
+    query_cursor.execute('''
         INSERT INTO test_questions (id, question, answer)
         VALUES (?, ?, ?)
     ''', (test_question_id, test_question, test_answer))
     conn.commit()
+    conn.close()
 
     return jsonify({
         'answer': answer,
@@ -111,10 +122,13 @@ def evaluate():
         return jsonify({'error': 'Missing test_question_id or user_answer'}), 400
 
     # Retrieve the correct answer from the database
-    cursor.execute('''
+    eval_conn = sqlite3.connect('qat_database.db')
+    eval_cursor = eval_conn.cursor()
+    eval_cursor.execute('''
         SELECT answer FROM test_questions WHERE id = ?
     ''', (test_question_id,))
-    result = cursor.fetchone()
+    result = eval_cursor.fetchone()
+    eval_cursor.close()
 
     if result is None:
         return jsonify({'error': 'Invalid test_question_id'}), 400
@@ -132,8 +146,10 @@ def evaluate():
 
 @app.route('/test_questions/', methods=['GET'])
 def get_test_questions():
-    cursor.execute('SELECT * FROM test_questions')
-    rows = cursor.fetchall()
+    tq_conn = sqlite3.connect('qat_database.db')
+    tq_cursor = tq_conn.cursor()
+    tq_cursor.execute('SELECT * FROM test_questions')
+    rows = tq_cursor.fetchall()
     test_questions = []
     for row in rows:
         test_questions.append({
@@ -141,42 +157,56 @@ def get_test_questions():
             'question': row[1],
             'answer': row[2]
         })
+    tq_cursor.close()
     return jsonify(test_questions)
 
 
 @app.route('/test_questions/<test_question_id>', methods=['DELETE'])
 def delete_test_question(test_question_id):
     try:
-        cursor.execute('DELETE FROM test_questions WHERE id=?', (test_question_id,))
-        conn.commit()
-        if cursor.rowcount == 0:
+        tq_conn = sqlite3.connect('qat_database.db')
+        tq_cursor = tq_conn.cursor()
+        tq_cursor.execute('DELETE FROM test_questions WHERE id=?', (test_question_id,))
+        tq_conn.commit()
+        if tq_cursor.rowcount == 0:
             return jsonify({'error': 'Test question not found'}), 404
+        tq_cursor.close()
         return jsonify({'message': 'Test question deleted successfully'}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 
-def process_pdf(filename):
-    with open(f'uploads/{filename}', 'rb') as pdf_file:
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
-        text = ""
-        for page in pdf_reader.pages:
-            text += page.extract_text()
-        # Save the extracted text to a file
-        with open(f'outputs/extracted_text_{filename}.txt', 'w') as text_file:
-            text_file.write(text)
-        print(f"Extracted text from PDF: {text}")
+def process_pdf(file):
+    # Read the PDF directly from the file object
+    pdf_reader = PyPDF2.PdfReader(file)
+    text = ""
+    for page in pdf_reader.pages:
+        text += page.extract_text()
+
+    # Save the extracted text to a file for further use (optional)
+    extracted_text_filename = f'extracted_text_{secure_filename(file.filename)}.txt'
+    with open(os.path.join(app.config['UPLOAD_FOLDER'], extracted_text_filename), 'w') as text_file:
+        text_file.write(text)
+
+    print(f"Extracted text from PDF: {text}")
+    return extracted_text_filename  # Return the filename for further processing
 
 
-def process_docx(filename):
-    doc = docx.Document(f'uploads/{filename}')
+def process_docx(file):
+    # Read the DOCX file from the file object
+    doc = docx.Document(file)
     text = ""
     for paragraph in doc.paragraphs:
         text += paragraph.text
-    # Save the extracted text to a file
-    with open(f'outputs/extracted_text_{filename}.txt', 'w') as text_file:
+
+    # Save the extracted text to a file for further use (optional)
+    extracted_text_filename = f'extracted_text_{secure_filename(file.filename)}.txt'
+    with open(os.path.join(app.config['UPLOAD_FOLDER'], extracted_text_filename), 'w') as text_file:
         text_file.write(text)
+
     print(f"Extracted text from DOCX: {text}")
+    return extracted_text_filename  # Return the filename for further processing
+
 
 
 # Generate bullet points from summarized answer
@@ -269,15 +299,18 @@ def update_test_question(test_question_id):
         return jsonify({'error': 'Missing question or answer'}), 400
 
     try:
-        cursor.execute('''
+        tq_conn = sqlite3.connect('qat_database.db')
+        tq_cursor = tq_conn.cursor()
+        tq_cursor.execute('''
             UPDATE test_questions
             SET question = ?, answer = ?
             WHERE id = ?
         ''', (new_question, new_answer, test_question_id))
         conn.commit()
 
-        if cursor.rowcount == 0:
+        if tq_cursor.rowcount == 0:
             return jsonify({'error': 'Test question not found'}), 404
+        tq_cursor.close()
 
         return jsonify({'message': 'Test question updated successfully'}), 200
     except Exception as e:
