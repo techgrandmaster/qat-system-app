@@ -8,11 +8,13 @@ import PyPDF2
 import docx
 import nltk
 from flask import Flask, request, jsonify, render_template
+from flask import session
 from flask_wtf import FlaskForm
 from textblob import TextBlob
 from transformers import pipeline
 from werkzeug.utils import secure_filename
 from wtforms import FileField, SubmitField
+from wtforms.fields.simple import TextAreaField
 from wtforms.validators import InputRequired
 
 app = Flask(__name__)
@@ -25,7 +27,15 @@ class UploadFileForm(FlaskForm):
     submit = SubmitField('Upload file')
 
 
-nltk.download('punkt')  # Download the Punkt sentence tokenizer
+class QueryForm(FlaskForm):
+    question = TextAreaField('Enter your query below', validators=[InputRequired()])
+    submit = SubmitField('Go')
+
+
+# Download the Punkt tokenizer model for sentence splitting
+nltk.download('punkt')
+nltk.download('punkt_tab')
+
 nltk.download('averaged_perceptron_tagger')  # Download the part-of-speech tagger
 
 # Initialize the question answering and summarization pipelines with specified model
@@ -49,67 +59,85 @@ conn.close()
 
 @app.route('/upload/', methods=['GET', 'POST'])
 def upload_document():
-    form = UploadFileForm()
-    if form.validate_on_submit():
-        file = form.file.data  # Grab the file
+    upload_form = UploadFileForm()
+    if upload_form.validate_on_submit():
+        uploaded_file = upload_form.file.data  # Grab the file
         # Save the file in the UPLOAD_FOLDER
-        filename = secure_filename(file.filename)
+        filename = secure_filename(uploaded_file.filename)
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(file_path)  # Save the file to disk
+        uploaded_file.save(file_path)  # Save the file to disk
 
         # Process the file according to its type (PDF or DOCX)
         try:
             if filename.endswith('.pdf'):
-                extracted_text_file = process_pdf(file)
+                extracted_text_file = process_pdf(uploaded_file)
             elif filename.endswith('.docx'):
-                extracted_text_file = process_docx(file)
+                extracted_text_file = process_docx(uploaded_file)
             else:
                 return jsonify({'error': 'Unsupported file type'}), 400
+            session['extracted_text_file_name'] = extracted_text_file  # Store the file name in the session
 
             return jsonify({'message': f'Document processed and saved as {extracted_text_file}'}), 200
+
         except Exception as e:
             return jsonify({'error': f'Error processing document: {str(e)}'}), 500
-    return render_template('index.html', form=form)
+
+    return render_template('index.html', form=upload_form)
 
 
-@app.route('/query/', methods=['POST'])
+@app.route('/query/', methods=['GET', 'POST'])
 def query():
-    data = request.get_json()
-    question = data.get('question')
-    document_path = data.get('document_path')  # Path to the uploaded document
+    query_form = QueryForm()
+    extracted_text_file_name = session.get('extracted_text_file_name')  # Retrieve the file name from the session
+    if extracted_text_file_name is None:
+        return jsonify({'error': 'No file uploaded or processed'}), 400  # Handle missing file
 
-    if not question or not document_path:
-        return jsonify({'error': 'Missing question or document_path'}), 400
+    if query_form.validate_on_submit():
+        question = query_form.question.data  # Grab the submitted question from the form
+        # Specify the path to the extracted text file
+        extracted_text_file = os.path.join(app.config['UPLOAD_FOLDER'], extracted_text_file_name)
 
-    # Answer the question
-    with open(document_path, 'r') as file:
-        context = file.read()
-    result = question_answering_pipeline({'question': question, 'context': context})
-    answer = result['answer']
+        try:
+            # Open and read the extracted text file
+            with open(extracted_text_file, 'r') as file:
+                context = file.read()
+        except Exception as e:
+            return jsonify({'error': f'Error reading extracted text: {str(e)}'}), 500
 
-    # Generate bullet points
-    bullet_points = generate_bullet_points(answer)
+        # Use the extracted text as context for the question-answering model
+        result = question_answering_pipeline({'question': question, 'context': context})
+        # print(f"Answer: '{result['answer']}'")
+        answer = result['answer']
 
-    # Generate test question
-    test_question, test_answer = generate_test_question_and_answer(answer)
+        # Generate bullet points
+        bullet_points = generate_bullet_points(answer)
+        # Generate test question
+        test_question, test_answer = generate_test_question_and_answer(answer)
 
-    # Save test question and answer
-    test_question_id = str(uuid.uuid4())
-    query_conn = sqlite3.connect('qat_database.db')
-    query_cursor = query_conn.cursor()
-    query_cursor.execute('''
-        INSERT INTO test_questions (id, question, answer)
-        VALUES (?, ?, ?)
-    ''', (test_question_id, test_question, test_answer))
-    conn.commit()
-    conn.close()
+        # Save test question and answer
+        test_question_id = str(uuid.uuid4())
+        query_conn = sqlite3.connect('qat_database.db')
+        query_cursor = query_conn.cursor()
+        query_cursor.execute('''
+            INSERT INTO test_questions (id, question, answer)
+            VALUES (?, ?, ?)
+        ''', (test_question_id, test_question, test_answer))
+        conn.commit()
+        conn.close()
 
-    return jsonify({
-        'answer': answer,
-        'bullet_points': bullet_points,
-        'test_question': test_question,
-        'test_question_id': test_question_id
-    })
+        return jsonify({
+            'answer': answer,
+            'bullet_points': bullet_points,
+            'test_question': test_question,
+            'test_question_id': test_question_id
+        })
+
+    if query_form.is_submitted():
+        # Render the result on the webpage
+        return render_template('answer.html', answer='', question=query_form.question.data)
+    else:
+        # Render the question form if no form is submitted yet
+        return render_template('query.html', form=query_form)
 
 
 @app.route('/evaluate/', methods=['POST'])
@@ -183,8 +211,8 @@ def process_pdf(file):
     for page in pdf_reader.pages:
         text += page.extract_text()
 
-    # Save the extracted text to a file for further use (optional)
-    extracted_text_filename = f'extracted_text_{secure_filename(file.filename)}.txt'
+    # Save the extracted text to a file for further use
+    extracted_text_filename = f'extracted_text_{os.path.splitext(secure_filename(file.filename))[0]}.txt'
     with open(os.path.join(app.config['UPLOAD_FOLDER'], extracted_text_filename), 'w') as text_file:
         text_file.write(text)
 
@@ -199,14 +227,13 @@ def process_docx(file):
     for paragraph in doc.paragraphs:
         text += paragraph.text
 
-    # Save the extracted text to a file for further use (optional)
-    extracted_text_filename = f'extracted_text_{secure_filename(file.filename)}.txt'
+    # Save the extracted text to a file for further use
+    extracted_text_filename = f'extracted_text_{os.path.splitext(secure_filename(file.filename))[0]}.txt'
     with open(os.path.join(app.config['UPLOAD_FOLDER'], extracted_text_filename), 'w') as text_file:
         text_file.write(text)
 
     print(f"Extracted text from DOCX: {text}")
     return extracted_text_filename  # Return the filename for further processing
-
 
 
 # Generate bullet points from summarized answer
@@ -231,7 +258,8 @@ def generate_bullet_points(answer):
 
         # Extract verbs with their objects (e.g., "explain the process", "identify the issues")
         for i in range(len(tagged_words) - 2):
-            if tagged_words[i][1].startswith('VB') and tagged_words[i + 1][1].startswith('DT') and tagged_words[i + 2][1].startswith('NN'):
+            if (tagged_words[i][1].startswith('VB') and tagged_words[i + 1][1].startswith('DT')
+                    and tagged_words[i + 2][1].startswith('NN')):
                 bullet_points.append(f"{tagged_words[i][0]} {tagged_words[i + 1][0]} {tagged_words[i + 2][0]}")
 
     # Remove duplicates and return the bullet points
@@ -266,7 +294,6 @@ def generate_test_question_and_answer(answer):
     test_question = random.choice(questions)
     # Generate the test answer
     test_answer = answer
-
     return test_question, test_answer
 
 
