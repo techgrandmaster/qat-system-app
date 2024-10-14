@@ -59,7 +59,6 @@ cursor.execute('''
     )
 ''')
 conn.commit()
-conn.close()
 
 
 def main():
@@ -135,7 +134,6 @@ def query():
 
         # Use the extracted text as context for the question-answering model
         result = question_answering_pipeline({'question': question, 'context': context})
-        # print(f"Answer: '{result['answer']}'")
         answer = result['answer']
 
         # Generate bullet points
@@ -151,8 +149,8 @@ def query():
             INSERT INTO test_questions (id, question, answer)
             VALUES (?, ?, ?)
         ''', (test_question_id, test_question, test_answer))
-        conn.commit()
-        conn.close()
+        query_conn.commit()
+        query_conn.close()
 
         session['test_question'] = test_question  # Store the test question in the session
         session['test_question_id'] = test_question_id  # Store the test question id in the session
@@ -196,7 +194,8 @@ def evaluate():
             SELECT answer FROM test_questions WHERE id = ?
         ''', (test_question_id,))
         result = eval_cursor.fetchone()
-        eval_cursor.close()
+        eval_conn.commit()
+        eval_conn.close()
 
         if result is None:
             return jsonify({'error': 'Invalid test_question_id'}), 400
@@ -231,7 +230,8 @@ def get_test_questions():
             'question': row[1],
             'answer': row[2]
         })
-    tq_cursor.close()
+    tq_conn.commit()
+    tq_conn.close()
     return jsonify(test_questions)
 
 
@@ -251,7 +251,8 @@ def delete_test_question(test_question_id):
         tq_conn.commit()
         if tq_cursor.rowcount == 0:
             return jsonify({'error': 'Test question not found'}), 404
-        tq_cursor.close()
+        tq_conn.commit()
+        tq_conn.close()
         return jsonify({'message': 'Test question deleted successfully'}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -302,8 +303,13 @@ def generate_bullet_points(answer):
     :param answer: The text input that needs to be summarized and converted into bullet points.
     :return: A list of bullet points extracted from the summarized text.
     """
+    length_ratio = 0.3
+    input_length = len(answer.split())
+    max_length = max(5, int(input_length * length_ratio))  # Ensure a minimum max_length of 5
+    min_length = max(3, int(max_length * 0.5))  # Set min_length to half of max_length, ensuring it's at least 3
     # Summarize the answer to extract key information
-    summary_text = summarization_pipeline(answer, max_length=150, min_length=50, do_sample=False)[0]['summary_text']
+    summary = summarization_pipeline(answer, max_length=max_length, min_length=min_length, do_sample=False)
+    summary_text = summary[0]['summary_text']
 
     # Split the summary into sentences
     sentences = nltk.sent_tokenize(summary_text)
@@ -345,7 +351,13 @@ def generate_test_question_and_answer(answer):
     questions.append(result['answer'])
 
     # Use summarization to identify key sentences and turn them into questions
-    summary_text = summarization_pipeline(answer, max_length=150, min_length=50, do_sample=False)[0]['summary_text']
+    length_ratio = 0.3
+    input_length = len(answer.split())
+    max_length = max(5, int(input_length * length_ratio))  # Ensure a minimum max_length of 5
+    min_length = max(3, int(max_length * 0.5))  # Set min_length to half of max_length, ensuring it's at least 3
+    # Summarize the answer to extract key information
+    summary = summarization_pipeline(answer, max_length=max_length, min_length=min_length, do_sample=False)
+    summary_text = summary[0]['summary_text']
     sentences = summary_text.split('. ')
     for sentence in sentences:
         # Use a simple heuristic to turn declarative sentences into questions
