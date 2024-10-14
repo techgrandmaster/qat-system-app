@@ -7,7 +7,7 @@ from difflib import SequenceMatcher
 import PyPDF2
 import docx
 import nltk
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, jsonify, render_template
 from flask import session
 from flask_wtf import FlaskForm
 from textblob import TextBlob
@@ -30,6 +30,11 @@ class UploadFileForm(FlaskForm):
 class QueryForm(FlaskForm):
     question = TextAreaField('Enter your query below', validators=[InputRequired()])
     submit = SubmitField('Go')
+
+
+class EvaluateForm(FlaskForm):
+    user_answer = TextAreaField('Enter your answer below', validators=[InputRequired()])
+    submit = SubmitField('Evaluate')
 
 
 # Download the Punkt tokenizer model for sentence splitting
@@ -59,6 +64,15 @@ conn.close()
 
 @app.route('/upload/', methods=['GET', 'POST'])
 def upload_document():
+    """
+    Handle the upload and processing of documents.
+
+    :return: If the request method is GET, renders the upload form template.
+             If the request method is POST and the file is successfully uploaded and processed,
+             returns a JSON response with a success message.
+             If the file type is unsupported or an error occurs during processing,
+             returns a JSON response with an error message and appropriate status code.
+    """
     upload_form = UploadFileForm()
     if upload_form.validate_on_submit():
         uploaded_file = upload_form.file.data  # Grab the file
@@ -82,11 +96,22 @@ def upload_document():
         except Exception as e:
             return jsonify({'error': f'Error processing document: {str(e)}'}), 500
 
-    return render_template('index.html', form=upload_form)
+    return render_template('upload.html', form=upload_form)
 
 
 @app.route('/query/', methods=['GET', 'POST'])
 def query():
+    """
+    Handles HTTP GET and POST requests to the /query/ endpoint.
+    On a GET request, renders the query form.
+    On a POST request, validates the form, reads the extracted text from a file,
+    generates an answer using a question-answering model, and then creates bullet points
+    and a test question based on the answer.
+    The results are stored in the database and returned as a JSON response.
+
+    :return: JSON response with the answer, bullet points, test question, and test question ID or an error message
+    and status code if something goes wrong.
+    """
     query_form = QueryForm()
     extracted_text_file_name = session.get('extracted_text_file_name')  # Retrieve the file name from the session
     if extracted_text_file_name is None:
@@ -125,6 +150,9 @@ def query():
         conn.commit()
         conn.close()
 
+        session['test_question'] = test_question  # Store the test question in the session
+        session['test_question_id'] = test_question_id  # Store the test question id in the session
+
         return jsonify({
             'answer': answer,
             'bullet_points': bullet_points,
@@ -132,48 +160,62 @@ def query():
             'test_question_id': test_question_id
         })
 
-    if query_form.is_submitted():
-        # Render the result on the webpage
-        return render_template('answer.html', answer='', question=query_form.question.data)
-    else:
-        # Render the question form if no form is submitted yet
-        return render_template('query.html', form=query_form)
+    return render_template('query.html', form=query_form)
 
 
-@app.route('/evaluate/', methods=['POST'])
+@app.route('/evaluate/', methods=['GET', 'POST'])
 def evaluate():
-    data = request.get_json()
-    test_question_id = data.get('test_question_id')
-    user_answer = data.get('user_answer')
+    """
+    Handles the evaluation of a user's answer to a test question.
 
-    if not test_question_id or not user_answer:
-        return jsonify({'error': 'Missing test_question_id or user_answer'}), 400
+    A form is used to capture the user's answer, which is then validated
+    and compared to the correct answer stored in the database.
+    If the submitted answer is correct, relevant metrics are calculated and returned as a JSON response.
+    If the form submission is invalid or if the provided question ID is not found, appropriate error messages are returned.
 
-    # Retrieve the correct answer from the database
-    eval_conn = sqlite3.connect('qat_database.db')
-    eval_cursor = eval_conn.cursor()
-    eval_cursor.execute('''
-        SELECT answer FROM test_questions WHERE id = ?
-    ''', (test_question_id,))
-    result = eval_cursor.fetchone()
-    eval_cursor.close()
+    :return:
+        On successful evaluation - JSON response containing `knowledge_understood` and `knowledge_confidence`.
+        On invalid form submission or missing question ID - Relevant error messages in JSON format.
+    """
+    eval_form = EvaluateForm()
+    # Retrieve the test question and its id from the session
+    test_question = session.get('test_question')
+    test_question_id = session.get('test_question_id')
 
-    if result is None:
-        return jsonify({'error': 'Invalid test_question_id'}), 400
+    if eval_form.validate_on_submit():
+        user_answer = eval_form.user_answer.data  # Grab the submitted answer from the form
 
-    correct_answer = result[0]
+        # Retrieve the correct answer from the database
+        eval_conn = sqlite3.connect('qat_database.db')
+        eval_cursor = eval_conn.cursor()
+        eval_cursor.execute('''
+            SELECT answer FROM test_questions WHERE id = ?
+        ''', (test_question_id,))
+        result = eval_cursor.fetchone()
+        eval_cursor.close()
 
-    # Evaluate the answer
-    knowledge_understood, knowledge_confidence = evaluate_answer(user_answer, correct_answer)
+        if result is None:
+            return jsonify({'error': 'Invalid test_question_id'}), 400
 
-    return jsonify({
-        'knowledge_understood': knowledge_understood,
-        'knowledge_confidence': knowledge_confidence
-    })
+        correct_answer = result[0]
+
+        # Evaluate the answer
+        knowledge_understood, knowledge_confidence = evaluate_answer(user_answer, correct_answer)
+
+        return jsonify({
+            'knowledge_understood': knowledge_understood,
+            'knowledge_confidence': knowledge_confidence
+        })
+
+    return render_template('evaluate.html', question=test_question, form=eval_form)
 
 
 @app.route('/test_questions/', methods=['GET'])
 def get_test_questions():
+    """
+    :return: A JSON response containing all test questions
+    retrieved from the 'test_questions' table in the 'qat_database.db' SQLite database.
+    """
     tq_conn = sqlite3.connect('qat_database.db')
     tq_cursor = tq_conn.cursor()
     tq_cursor.execute('SELECT * FROM test_questions')
@@ -191,6 +233,13 @@ def get_test_questions():
 
 @app.route('/test_questions/<test_question_id>', methods=['DELETE'])
 def delete_test_question(test_question_id):
+    """
+    :param test_question_id: The ID of the test question to be deleted.
+    :return: A JSON response indicating the result of the deletion operation.
+    Possible responses include a success message with a 200 status code if the deletion is successful,
+    an error message with a 404 status code if the test question is not found,
+    and an error message with a 500 status code if there is an internal server error.
+    """
     try:
         tq_conn = sqlite3.connect('qat_database.db')
         tq_cursor = tq_conn.cursor()
@@ -205,6 +254,10 @@ def delete_test_question(test_question_id):
 
 
 def process_pdf(file):
+    """
+    :param file: File object representing the PDF to be processed.
+    :return: The filename where the extracted text has been saved.
+    """
     # Read the PDF directly from the file object
     pdf_reader = PyPDF2.PdfReader(file)
     text = ""
@@ -221,6 +274,10 @@ def process_pdf(file):
 
 
 def process_docx(file):
+    """
+    :param file: The DOCX file object to be processed.
+    :return: The filename where the extracted text is saved.
+    """
     # Read the DOCX file from the file object
     doc = docx.Document(file)
     text = ""
@@ -236,10 +293,13 @@ def process_docx(file):
     return extracted_text_filename  # Return the filename for further processing
 
 
-# Generate bullet points from summarized answer
 def generate_bullet_points(answer):
+    """
+    :param answer: The text input that needs to be summarized and converted into bullet points.
+    :return: A list of bullet points extracted from the summarized text.
+    """
     # Summarize the answer to extract key information
-    summary_text = summarization_pipeline(answer, max_length=100, min_length=30, do_sample=False)[0]['summary_text']
+    summary_text = summarization_pipeline(answer, max_length=150, min_length=50, do_sample=False)[0]['summary_text']
 
     # Split the summary into sentences
     sentences = nltk.sent_tokenize(summary_text)
@@ -267,7 +327,10 @@ def generate_bullet_points(answer):
 
 
 def generate_test_question_and_answer(answer):
-    # Generate potential test questions
+    """
+    :param answer: A string containing the text from which questions should be generated.
+    :return: A tuple containing a generated question and the corresponding answer.
+    """
     questions = []
 
     # Ask the model to generate questions directly
@@ -278,7 +341,7 @@ def generate_test_question_and_answer(answer):
     questions.append(result['answer'])
 
     # Use summarization to identify key sentences and turn them into questions
-    summary_text = summarization_pipeline(answer, max_length=100, min_length=30, do_sample=False)[0]['summary_text']
+    summary_text = summarization_pipeline(answer, max_length=150, min_length=50, do_sample=False)[0]['summary_text']
     sentences = summary_text.split('. ')
     for sentence in sentences:
         # Use a simple heuristic to turn declarative sentences into questions
@@ -297,9 +360,13 @@ def generate_test_question_and_answer(answer):
     return test_question, test_answer
 
 
-# Logic to compare user_answer and correct_answer using string similarity and sentiment analysis
 def evaluate_answer(user_answer, correct_answer):
-
+    """
+    :param user_answer: The answer provided by the user as a string.
+    :param correct_answer: The correct answer to compare against the user's answer.
+    :return: A tuple containing a boolean indicating if the answer is understood (based on a similarity threshold
+    and sentiment match) and an integer representing the confidence percentage.
+    """
     # Compare user answer and correct answer using string similarity
     similarity_ratio = SequenceMatcher(None, user_answer, correct_answer).ratio()
 
@@ -315,33 +382,6 @@ def evaluate_answer(user_answer, correct_answer):
     knowledge_confidence = int(similarity_ratio * 100)
 
     return knowledge_understood, knowledge_confidence
-
-
-def update_test_question(test_question_id):
-    data = request.get_json()
-    new_question = data.get('question')
-    new_answer = data.get('answer')
-
-    if not new_question or not new_answer:
-        return jsonify({'error': 'Missing question or answer'}), 400
-
-    try:
-        tq_conn = sqlite3.connect('qat_database.db')
-        tq_cursor = tq_conn.cursor()
-        tq_cursor.execute('''
-            UPDATE test_questions
-            SET question = ?, answer = ?
-            WHERE id = ?
-        ''', (new_question, new_answer, test_question_id))
-        conn.commit()
-
-        if tq_cursor.rowcount == 0:
-            return jsonify({'error': 'Test question not found'}), 404
-        tq_cursor.close()
-
-        return jsonify({'message': 'Test question updated successfully'}), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
 
 
 if __name__ == '__main__':
