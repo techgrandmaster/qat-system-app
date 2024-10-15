@@ -2,6 +2,7 @@ import os
 import random
 import sqlite3
 import uuid
+from collections import OrderedDict
 from difflib import SequenceMatcher
 
 import PyPDF2
@@ -43,8 +44,9 @@ nltk.download('punkt_tab')
 
 nltk.download('averaged_perceptron_tagger')  # Download the part-of-speech tagger
 
-# Initialize the question answering and summarization pipelines with specified model
+# Initialize the question answering and generation, and summarization pipelines with specified model
 question_answering_pipeline = pipeline("question-answering", model="distilbert-base-cased-distilled-squad")
+question_generation_pipeline = pipeline("text2text-generation", model="valhalla/t5-base-qg-hl")
 summarization_pipeline = pipeline("summarization", model="facebook/bart-large-cnn")
 
 # Database setup
@@ -303,13 +305,23 @@ def generate_bullet_points(answer):
     :param answer: The text input that needs to be summarized and converted into bullet points.
     :return: A list of bullet points extracted from the summarized text.
     """
+    # Check if answer is too short to summarize
+    if len(answer.split()) < 10:
+        return ["Input too short to summarize into bullet points."]
+
     length_ratio = 0.3
     input_length = len(answer.split())
+
+    # Set reasonable max_length and min_length for summarization
     max_length = max(5, int(input_length * length_ratio))  # Ensure a minimum max_length of 5
     min_length = max(3, int(max_length * 0.5))  # Set min_length to half of max_length, ensuring it's at least 3
+
     # Summarize the answer to extract key information
-    summary = summarization_pipeline(answer, max_length=max_length, min_length=min_length, do_sample=False)
-    summary_text = summary[0]['summary_text']
+    try:
+        summary = summarization_pipeline(answer, max_length=max_length, min_length=min_length, do_sample=False)
+        summary_text = summary[0]['summary_text']
+    except Exception as e:
+        return [f"Error during summarization: {str(e)}"]
 
     # Split the summary into sentences
     sentences = nltk.sent_tokenize(summary_text)
@@ -317,9 +329,13 @@ def generate_bullet_points(answer):
     # Extract key phrases from each sentence
     bullet_points = []
     for sentence in sentences:
-        # Perform part-of-speech tagging
+        # Perform word tokenization and part-of-speech tagging
         words = nltk.word_tokenize(sentence)
         tagged_words = nltk.pos_tag(words)
+
+        # Add error handling for short or empty sentences
+        if len(tagged_words) < 2:
+            continue
 
         # Extract noun phrases (e.g., "key concepts", "important factors")
         for i in range(len(tagged_words) - 1):
@@ -332,8 +348,14 @@ def generate_bullet_points(answer):
                     and tagged_words[i + 2][1].startswith('NN')):
                 bullet_points.append(f"{tagged_words[i][0]} {tagged_words[i + 1][0]} {tagged_words[i + 2][0]}")
 
-    # Remove duplicates and return the bullet points
-    return list(set(bullet_points))
+    # Use OrderedDict to maintain order while removing duplicates
+    bullet_points = list(OrderedDict.fromkeys(bullet_points))
+
+    # If no bullet points were found, return a default message
+    if not bullet_points:
+        return ["No significant bullet points found."]
+
+    return bullet_points
 
 
 def generate_test_question_and_answer(answer):
@@ -343,21 +365,21 @@ def generate_test_question_and_answer(answer):
     """
     questions = []
 
-    # Ask the model to generate questions directly
-    result = question_answering_pipeline({
-        'question': "Generate a question about this text.",
-        'context': answer
-    })
-    questions.append(result['answer'])
+    # Ask the model to generate questions directly using a prompt
+    # result = question_generation_pipeline(prompt, max_new_tokens=50)
+    result = question_generation_pipeline(f"generate question: {answer}")
+    questions.append(result[0]['generated_text'])
 
     # Use summarization to identify key sentences and turn them into questions
     length_ratio = 0.3
     input_length = len(answer.split())
     max_length = max(5, int(input_length * length_ratio))  # Ensure a minimum max_length of 5
     min_length = max(3, int(max_length * 0.5))  # Set min_length to half of max_length, ensuring it's at least 3
+
     # Summarize the answer to extract key information
     summary = summarization_pipeline(answer, max_length=max_length, min_length=min_length, do_sample=False)
     summary_text = summary[0]['summary_text']
+
     sentences = summary_text.split('. ')
     for sentence in sentences:
         # Use a simple heuristic to turn declarative sentences into questions
@@ -366,12 +388,36 @@ def generate_test_question_and_answer(answer):
             questions.append(question)
         elif " is " in sentence:
             parts = sentence.split(" is ")
-            question = f"What is {parts[0]}?"
+            if len(parts) > 1:
+                question = f"What is {parts[0]}?"
+                questions.append(question)
+        elif sentence.startswith("Can"):
+            question = f"{sentence}?"
             questions.append(question)
+        elif " does " in sentence:
+            parts = sentence.split(" does ")
+            if len(parts) > 1:
+                question = f"Does {parts[0]} {parts[1]}?"
+                questions.append(question)
+        elif " will " in sentence:
+            parts = sentence.split(" will ")
+            if len(parts) > 1:
+                question = f"Will {parts[0]} {parts[1]}?"
+                questions.append(question)
+        elif " should " in sentence:
+            parts = sentence.split(" should ")
+            if len(parts) > 1:
+                question = f"Should {parts[0]} {parts[1]}?"
+                questions.append(question)
+
+    # Check if we have any questions, if not return a default question
+    if not questions:
+        return "Could not generate a question from the given text", answer
 
     # Select a test question randomly
     test_question = random.choice(questions)
-    # Generate the test answer
+
+    # Generate the test answer based on the selected question
     test_answer = answer
     return test_question, test_answer
 
@@ -383,6 +429,10 @@ def evaluate_answer(user_answer, correct_answer):
     :return: A tuple containing a boolean indicating if the answer is understood (based on a similarity threshold
     and sentiment match) and an integer representing the confidence percentage.
     """
+    # Handle empty inputs to avoid errors
+    if not user_answer or not correct_answer:
+        return False, 0
+
     # Compare user answer and correct answer using string similarity
     similarity_ratio = SequenceMatcher(None, user_answer, correct_answer).ratio()
 
@@ -390,8 +440,10 @@ def evaluate_answer(user_answer, correct_answer):
     user_answer_blob = TextBlob(user_answer)
     correct_answer_blob = TextBlob(correct_answer)
 
-    # Compare the sentiment polarity
-    sentiment_match = user_answer_blob.sentiment.polarity == correct_answer_blob.sentiment.polarity
+    # Compare the sentiment polarity, but allow for slight variations
+    user_polarity = user_answer_blob.sentiment.polarity
+    correct_polarity = correct_answer_blob.sentiment.polarity
+    sentiment_match = (user_polarity >= 0 and correct_polarity >= 0) or (user_polarity < 0 and correct_polarity < 0)
 
     # Determine if the answer is correct based on similarity threshold and sentiment match
     knowledge_understood = similarity_ratio > 0.7 and sentiment_match
