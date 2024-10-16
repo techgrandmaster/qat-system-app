@@ -42,7 +42,9 @@ class EvaluateForm(FlaskForm):
 nltk.download('punkt')
 nltk.download('punkt_tab')
 
-nltk.download('averaged_perceptron_tagger')  # Download the part-of-speech tagger
+# Download the part-of-speech tagger
+nltk.download('averaged_perceptron_tagger')
+nltk.download('averaged_perceptron_tagger_eng')
 
 # Initialize the question answering and generation, and summarization pipelines with specified model
 question_answering_pipeline = pipeline("question-answering", model="distilbert-base-cased-distilled-squad")
@@ -302,19 +304,18 @@ def generate_bullet_points(answer):
     :return: A list of bullet points extracted from the summarized text.
     """
     # Check if answer is too short to summarize
-    if len(answer.split()) < 10:
+    if len(answer.split()) < 3:
         return ["Input too short to summarize into bullet points."]
 
+    # Set length constraints for the summarization
     length_ratio = 0.3
     input_length = len(answer.split())
-
-    # Set reasonable max_length and min_length for summarization
-    max_length = max(5, int(input_length * length_ratio))  # Ensure a minimum max_length of 5
-    min_length = max(3, int(max_length * 0.5))  # Set min_length to half of max_length, ensuring it's at least 3
+    max_new_tokens = max(5, int(input_length * length_ratio))
+    min_length = max(3, int(max_new_tokens * 0.5))
 
     # Summarize the answer to extract key information
     try:
-        summary = summarization_pipeline(answer, max_length=max_length, min_length=min_length, do_sample=False)
+        summary = summarization_pipeline(answer, max_new_tokens=max_new_tokens, min_length=min_length, do_sample=False)
         summary_text = summary[0]['summary_text']
     except Exception as e:
         return [f"Error during summarization: {str(e)}"]
@@ -333,18 +334,23 @@ def generate_bullet_points(answer):
         if len(tagged_words) < 2:
             continue
 
-        # Extract noun phrases (e.g., "key concepts", "important factors")
+        # Extract noun chunks (e.g., "key concepts")
+        noun_phrases = []
         for i in range(len(tagged_words) - 1):
             if tagged_words[i][1].startswith('NN') and tagged_words[i + 1][1].startswith('NN'):
-                bullet_points.append(f"{tagged_words[i][0]} {tagged_words[i + 1][0]}")
+                noun_phrases.append(f"{tagged_words[i][0]} {tagged_words[i + 1][0]}")
 
-        # Extract verbs with their objects (e.g., "explain the process", "identify the issues")
+        # Extract verb-object pairs (e.g., "explain the process")
+        verb_phrases = []
         for i in range(len(tagged_words) - 2):
             if (tagged_words[i][1].startswith('VB') and tagged_words[i + 1][1].startswith('DT')
                     and tagged_words[i + 2][1].startswith('NN')):
-                bullet_points.append(f"{tagged_words[i][0]} {tagged_words[i + 1][0]} {tagged_words[i + 2][0]}")
+                verb_phrases.append(f"{tagged_words[i][0]} {tagged_words[i + 1][0]} {tagged_words[i + 2][0]}")
 
-    # Use OrderedDict to maintain order while removing duplicates
+        bullet_points.extend(noun_phrases)
+        bullet_points.extend(verb_phrases)
+
+    # Use OrderedDict to remove duplicates while preserving order
     bullet_points = list(OrderedDict.fromkeys(bullet_points))
 
     # If no bullet points were found, return a default message
