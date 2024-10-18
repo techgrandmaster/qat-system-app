@@ -9,7 +9,7 @@ setup(
     author="Abiola Omolaja",
     author_email="biolaomolaja@gmail.com",
     description="A Flask app for QAT system",
-    long_description=long_description,
+    long_description="QAT system app is a comprehensive QAT system Flask application that provides various features such as text processing, PDF handling, and natural language processing (NLP). The application is designed to streamline and enhance learning experiences. It integrates various libraries and frameworks to provide robust functionalities for text processing, data parsing, web interactions, and more, making it an essential tool for students, researchers and even faculty members.",
     long_description_content_type="text/markdown",
     url="https://github.com/techgrandmaster/qat-system-app",
     packages=find_packages(),
